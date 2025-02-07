@@ -14,26 +14,12 @@ services:
       - REDIS_HOST=redis
       - POSTGRESQL_HOST=postgres
     ports:
-      - "8080:8080"
+      - "8082:8080"
 
-  chirpstack-gateway-bridge:
-    image: chirpstack/chirpstack-gateway-bridge:4
-    restart: unless-stopped
-    ports:
-      - "1700:1700/udp"
-    volumes:
-      - ./configuration/chirpstack-gateway-bridge:/etc/chirpstack-gateway-bridge
-    environment:
-      - INTEGRATION__MQTT__EVENT_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/event/{{ .EventType }}
-      - INTEGRATION__MQTT__STATE_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/state/{{ .StateType }}
-      - INTEGRATION__MQTT__COMMAND_TOPIC_TEMPLATE=eu868/gateway/{{ .GatewayID }}/command/#
-    depends_on:
-      - mosquitto
-  
   chirpstack-gateway-bridge-basicstation:
     image: chirpstack/chirpstack-gateway-bridge:4
     restart: unless-stopped
-    command: -c /etc/chirpstack-gateway-bridge/chirpstack-gateway-bridge-basicstation-eu868.toml
+    command: -c /etc/chirpstack-gateway-bridge/chirpstack-gateway-bridge-basicstation-us915_0.toml
     ports:
       - "3001:3001"
     volumes:
@@ -49,6 +35,27 @@ services:
       - "8090:8090"
     depends_on:
       - chirpstack
+
+  chirpstack-fuota-server:
+    build:
+      context: /home/dwagner/Documents/git/chirpstack-fuota-server
+      dockerfile: Dockerfile
+      target: production
+    depends_on:
+      - postgres
+      - chirpstack
+    links:
+      - postgres
+      - chirpstack
+    command:
+      - -c
+      - /etc/fuota.cfg
+    ports:
+      - "8091:8070"
+    volumes:
+      - type: bind
+        source: ./configuration/chirpstack-fuota-server/fuota.cfg
+        target: /etc/fuota.cfg
 
   postgres:
     image: postgres:14-alpine
@@ -73,9 +80,59 @@ services:
     restart: unless-stopped
     ports:
       - "1883:1883"
-    volumes: 
+    volumes:
       - ./configuration/mosquitto/config/:/mosquitto/config/
+
+  grafana:
+    image: grafana/grafana-oss
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+     - '3000:3000'
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./configuration/grafana/grafana.ini:/etc/grafana/grafana.ini
+
+  influxdb2:
+    image: influxdb:2
+    ports:
+      - 8086:8086
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME_FILE: /run/secrets/influxdb2-admin-username
+      DOCKER_INFLUXDB_INIT_PASSWORD_FILE: /run/secrets/influxdb2-admin-password
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN_FILE: /run/secrets/influxdb2-admin-token
+      DOCKER_INFLUXDB_INIT_ORG: docs
+      DOCKER_INFLUXDB_INIT_BUCKET: home
+    secrets:
+      - influxdb2-admin-username
+      - influxdb2-admin-password
+      - influxdb2-admin-token
+    volumes:
+      - influxdb2-data:/var/lib/influxdb2
+      - influxdb2-config:/etc/influxdb2
+
+  telegraf:
+    image: telegraf:latest
+    volumes:
+      - ./configuration/telegraf/gw_uplink.conf:/etc/telegraf/telegraf.conf:ro
+      - ./configuration/proto:/etc/proto:ro
+    secrets:
+      - telegraf-influx-token
+
+secrets:
+  influxdb2-admin-username:
+    file: ./secrets/influxdb2-admin-username
+  influxdb2-admin-password:
+    file: ./secrets/influxdb2-admin-password
+  influxdb2-admin-token:
+    file: ./secrets/influxdb2-admin-token
+  telegraf-influx-token:
+    file: ./secrets/telegraf-influx-token
 
 volumes:
   postgresqldata:
   redisdata:
+  influxdb2-data:
+  influxdb2-config:
+  grafana-storage:
